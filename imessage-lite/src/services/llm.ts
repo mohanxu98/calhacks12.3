@@ -3,7 +3,16 @@ import personas from '../personas.json'
 export type ChatTurn = { author: 'me' | 'them'; text: string }
 export type Persona = { id: string; name: string; description: string; system?: string }
 
-export function getPersonaForConversation(conversation: { id: string; name: string }): Persona {
+export function getPersonaForConversation(conversation: { id: string; name: string; personaDescription?: string; personaSystem?: string }): Persona {
+  // Prefer per-conversation customizations if present
+  if (conversation.personaDescription || conversation.personaSystem) {
+    return {
+      id: conversation.id,
+      name: conversation.name,
+      description: conversation.personaDescription || 'Custom persona.',
+      system: conversation.personaSystem,
+    }
+  }
   const byId = (personas as Persona[]).find(p => p.id === conversation.id)
   if (byId) return byId
   const byName = (personas as Persona[]).find(p => p.name.toLowerCase() === conversation.name.toLowerCase())
@@ -273,6 +282,9 @@ async function generateReplyViaGemini(
   // Construct contents: include brief persona instruction, then history, then the new user message
   const contents: Array<{ role: string; parts: Array<{ text: string }> }> = []
   const instruction = `You are ${persona.name}. ${persona.description || ''} Keep replies short, natural, and in-character.`.trim()
+  if (persona.system && persona.system.trim()) {
+    contents.push({ role: 'user', parts: [{ text: persona.system.trim() }] })
+  }
   contents.push({ role: 'user', parts: [{ text: instruction }] })
   for (const turn of history) {
     contents.push({ role: turn.author === 'me' ? 'user' : 'model', parts: [{ text: turn.text }] })

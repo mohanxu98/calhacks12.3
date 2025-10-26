@@ -3,6 +3,8 @@ import { generateReply, getPersonaForConversation, scoreMessage, generateQuiz, t
 import { TypingBubble } from './TypingBubble'
 import { NarratorModal } from './NarratorModal'
 import { QuizModal } from './QuizModal'
+import { NewConversationModal } from './NewConversationModal'
+import { ContactCardModal } from './ContactCardModal'
 
 type Message = {
   id: string
@@ -20,6 +22,9 @@ type Conversation = {
   unlocked?: boolean // gated progression
   lives?: number // per-conversation lives (default 3)
   quizPassed?: boolean
+  // Custom persona fields
+  personaDescription?: string
+  personaSystem?: string
 }
 
 type Store = {
@@ -89,6 +94,8 @@ export function ChatLayout() {
   const [selectedId, setSelectedId] = useState<string>(store.conversations[0]?.id ?? '')
   const [query, setQuery] = useState('')
   const [pending, setPending] = useState(false)
+  const [newOpen, setNewOpen] = useState(false)
+  const [contactOpen, setContactOpen] = useState(false)
   const llmEnabled = store.llmEnabled ?? true
   const currentConversation = store.conversations.find(c => c.id === selectedId)
   const quizPassed = currentConversation?.quizPassed ?? false
@@ -103,6 +110,16 @@ export function ChatLayout() {
   const [quiz, setQuiz] = useState<Quiz | null>(null)
 
   useEffect(() => { saveStore(store) }, [store])
+  // If a new conversation is selected and has no messages but has persona info, let them speak first
+  useEffect(() => {
+    if (!selectedId) return
+    const convo = store.conversations.find(c => c.id === selectedId)
+    if (!convo) return
+    const empty = !store.messages.some(m => m.conversationId === selectedId)
+    if (empty && (convo.personaDescription || convo.personaSystem)) {
+      void startPersonaIntro(selectedId)
+    }
+  }, [selectedId])
 
   const filteredConversations = useMemo(() => {
     const q = query.trim().toLowerCase()
@@ -222,6 +239,29 @@ export function ChatLayout() {
     }
   }
 
+  async function startPersonaIntro(conversationId: string) {
+    const convo = store.conversations.find(c => c.id === conversationId)
+    if (!convo) return
+    const alreadyHas = store.messages.some(m => m.conversationId === conversationId)
+    if (alreadyHas) return
+    setPending(true)
+    try {
+      const history: ChatTurn[] = []
+      const persona = getPersonaForConversation(convo as any)
+      const opener = await generateReply({ persona, history, userMessage: 'Start the conversation with a natural, in-character opener.' })
+      const msg: Message = {
+        id: 'm' + Math.random().toString(36).slice(2),
+        conversationId,
+        author: 'them',
+        text: opener || 'Hey! 😊',
+        createdAt: Date.now(),
+      }
+      setStore(s => ({ ...s, messages: [...s.messages, msg] }))
+    } finally {
+      setPending(false)
+    }
+  }
+
   function guardBeforeSend(text: string): boolean {
     const now = Date.now()
     if (now - lastNarratorAt < 15000) return false
@@ -253,6 +293,12 @@ export function ChatLayout() {
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
+        </div>
+        <div style={{ padding: '0 12px 10px' }}>
+          <button
+            onClick={() => setNewOpen(true)}
+            style={{ width: '100%', padding: '8px 10px', borderRadius: 9, border: '1px solid var(--border)', background: 'transparent', color: 'var(--text)' }}
+          >New Message</button>
         </div>
         <div className="conversations">
           {filteredConversations.map(c => {
@@ -322,6 +368,13 @@ export function ChatLayout() {
                 }}
               >Next</button>
             )}
+            {currentConversation && (
+              <button
+                title="Contact"
+                onClick={() => setContactOpen(true)}
+                style={{ borderRadius: 12, border: '1px solid var(--border)', background: 'transparent', color: 'var(--subtle)', fontSize: 12, padding: '4px 8px', cursor: 'pointer' }}
+              >Contact</button>
+            )}
             <div style={{ color: 'var(--subtle)', fontSize: 12 }}>iMessage</div>
           </div>
         </div>
@@ -355,6 +408,43 @@ export function ChatLayout() {
         />
       </section>
       <NarratorModal open={narratorOpen} text={narratorText} onClose={() => setNarratorOpen(false)} />
+      <NewConversationModal
+        open={newOpen}
+        conversations={store.conversations.map(c => ({ id: c.id, name: c.name }))}
+        onClose={() => setNewOpen(false)}
+        onCreate={(name) => {
+          const id = 'c' + Math.random().toString(36).slice(2)
+          const conv: Conversation = { id, name, progress: 50, unlocked: true, lives: 3, quizPassed: false, personaDescription: '', personaSystem: undefined }
+          setStore(s => ({ ...s, conversations: [conv, ...s.conversations], messages: s.messages }))
+          setSelectedId(id)
+          setNewOpen(false)
+          setContactOpen(true)
+          // If the user closes the contact card without saving, still try to have persona open later
+        }}
+        onSelectExisting={(id) => {
+          setSelectedId(id)
+          setNewOpen(false)
+        }}
+      />
+      {currentConversation && (
+        <ContactCardModal
+          open={contactOpen}
+          name={currentConversation.name}
+          description={currentConversation.personaDescription || ''}
+          system={currentConversation.personaSystem}
+          onClose={() => setContactOpen(false)}
+          onSave={({ description, system }) => {
+            setStore(s => ({
+              ...s,
+              conversations: s.conversations.map(c => c.id === currentConversation.id ? { ...c, personaDescription: description, personaSystem: system } : c)
+            }))
+            setContactOpen(false)
+            // After saving persona details, let them initiate the chat if empty
+            const has = store.messages.some(m => m.conversationId === currentConversation.id)
+            if (!has) void startPersonaIntro(currentConversation.id)
+          }}
+        />
+      )}
       <QuizModal
         open={quizOpen}
         quiz={quiz}
