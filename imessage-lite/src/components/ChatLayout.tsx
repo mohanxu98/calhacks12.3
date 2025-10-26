@@ -1,10 +1,11 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { generateReply, getPersonaForConversation, scoreMessage, generateQuiz, type ChatTurn, type Quiz } from '../services/llm'
 import { TypingBubble } from './TypingBubble'
 import { NarratorModal } from './NarratorModal'
 import { QuizModal } from './QuizModal'
 import { NewConversationModal } from './NewConversationModal'
 import { ContactCardModal } from './ContactCardModal'
+import { AudioBubble } from './AudioBubble'
 
 type Message = {
   id: string
@@ -12,6 +13,7 @@ type Message = {
   author: 'me' | 'them'
   text: string
   createdAt: number
+  kind?: 'text' | 'audio'
 }
 
 type Conversation = {
@@ -25,6 +27,8 @@ type Conversation = {
   // Custom persona fields
   personaDescription?: string
   personaSystem?: string
+  introDone?: boolean
+  voiceMemosEnabled?: boolean
 }
 
 type Store = {
@@ -108,6 +112,7 @@ export function ChatLayout() {
   const [lastNarratorAt, setLastNarratorAt] = useState(0)
   const [quizOpen, setQuizOpen] = useState(false)
   const [quiz, setQuiz] = useState<Quiz | null>(null)
+  const introInFlightRef = useRef<Set<string>>(new Set())
 
   useEffect(() => { saveStore(store) }, [store])
   // If a new conversation is selected and has no messages but has persona info, let them speak first
@@ -165,6 +170,7 @@ export function ChatLayout() {
         author: 'them',
         text: reply,
         createdAt: Date.now(),
+        kind: convo.voiceMemosEnabled ? 'audio' : 'text'
       }
       setStore(s => ({ ...s, messages: [...s.messages, msg] }))
     } finally {
@@ -243,22 +249,30 @@ export function ChatLayout() {
     const convo = store.conversations.find(c => c.id === conversationId)
     if (!convo) return
     const alreadyHas = store.messages.some(m => m.conversationId === conversationId)
-    if (alreadyHas) return
+    if (alreadyHas || convo.introDone) return
+    if (introInFlightRef.current.has(conversationId)) return
+    introInFlightRef.current.add(conversationId)
     setPending(true)
     try {
       const history: ChatTurn[] = []
       const persona = getPersonaForConversation(convo as any)
-      const opener = await generateReply({ persona, history, userMessage: 'Start the conversation with a natural, in-character opener.' })
+      const opener = await generateReply({ persona, history, userMessage: 'Start the conversation with a natural, in-character opener. Do not use or guess the user’s name.' })
       const msg: Message = {
         id: 'm' + Math.random().toString(36).slice(2),
         conversationId,
         author: 'them',
         text: opener || 'Hey! 😊',
         createdAt: Date.now(),
+        kind: convo.voiceMemosEnabled ? 'audio' : 'text'
       }
-      setStore(s => ({ ...s, messages: [...s.messages, msg] }))
+      setStore(s => ({
+        ...s,
+        messages: [...s.messages, msg],
+        conversations: s.conversations.map(c => c.id === conversationId ? { ...c, introDone: true } : c)
+      }))
     } finally {
       setPending(false)
+      introInFlightRef.current.delete(conversationId)
     }
   }
 
@@ -278,7 +292,7 @@ export function ChatLayout() {
     setPending(false)
     setStore(s => {
       const kept = s.messages.filter(m => m.conversationId !== conversationId)
-      const updatedConversations = s.conversations.map(c => c.id === conversationId ? { ...c, progress: 50 } : c)
+      const updatedConversations = s.conversations.map(c => c.id === conversationId ? { ...c, progress: 50, introDone: false } : c)
       return { ...s, messages: kept, conversations: updatedConversations }
     })
   }
@@ -321,11 +335,6 @@ export function ChatLayout() {
                 <div className="conv-meta">
                   <div className="conv-name" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                     <span>{c.name}</span>
-                    <span className="conv-hearts">
-                      {Array.from({ length: 3 }).map((_, i) => (
-                        <span key={i} aria-hidden style={{ color: i < (c.lives ?? 3) ? '#ef4444' : '#6b7280' }}>❤</span>
-                      ))}
-                    </span>
                   </div>
                   <div className="conv-preview">{last?.text ?? 'No messages yet'}</div>
                 </div>
@@ -375,7 +384,7 @@ export function ChatLayout() {
                 style={{ borderRadius: 12, border: '1px solid var(--border)', background: 'transparent', color: 'var(--subtle)', fontSize: 12, padding: '4px 8px', cursor: 'pointer' }}
               >Contact</button>
             )}
-            <div style={{ color: 'var(--subtle)', fontSize: 12 }}>iMessage</div>
+            <div style={{ color: 'var(--subtle)', fontSize: 12 }}>c2h</div>
           </div>
         </div>
         <div className="progress-bar">
@@ -395,7 +404,10 @@ export function ChatLayout() {
             return (
               <div key={m.id}>
                 {showTime && <div className="timestamp">{new Date(m.createdAt).toLocaleString()}</div>}
-                <div className={`bubble ${m.author === 'me' ? 'me' : 'them'}`}>{m.text}</div>
+                {m.kind === 'audio'
+                  ? <AudioBubble text={m.text} author={m.author} />
+                  : <div className={`bubble ${m.author === 'me' ? 'me' : 'them'}`}>{m.text}</div>
+                }
               </div>
             )
           })}
@@ -413,8 +425,15 @@ export function ChatLayout() {
         conversations={store.conversations.map(c => ({ id: c.id, name: c.name }))}
         onClose={() => setNewOpen(false)}
         onCreate={(name) => {
+          const trimmed = name.trim()
+          const existing = store.conversations.find(c => c.name.toLowerCase() === trimmed.toLowerCase())
+          if (existing) {
+            setSelectedId(existing.id)
+            setNewOpen(false)
+            return
+          }
           const id = 'c' + Math.random().toString(36).slice(2)
-          const conv: Conversation = { id, name, progress: 50, unlocked: true, lives: 3, quizPassed: false, personaDescription: '', personaSystem: undefined }
+          const conv: Conversation = { id, name: trimmed, progress: 50, unlocked: true, lives: 3, quizPassed: false, personaDescription: '', personaSystem: undefined, introDone: false }
           setStore(s => ({ ...s, conversations: [conv, ...s.conversations], messages: s.messages }))
           setSelectedId(id)
           setNewOpen(false)
@@ -432,11 +451,12 @@ export function ChatLayout() {
           name={currentConversation.name}
           description={currentConversation.personaDescription || ''}
           system={currentConversation.personaSystem}
+          voiceMemosEnabled={currentConversation.voiceMemosEnabled}
           onClose={() => setContactOpen(false)}
-          onSave={({ description, system }) => {
+          onSave={({ description, system, voiceMemosEnabled }) => {
             setStore(s => ({
               ...s,
-              conversations: s.conversations.map(c => c.id === currentConversation.id ? { ...c, personaDescription: description, personaSystem: system } : c)
+              conversations: s.conversations.map(c => c.id === currentConversation.id ? { ...c, personaDescription: description, personaSystem: system, voiceMemosEnabled } : c)
             }))
             setContactOpen(false)
             // After saving persona details, let them initiate the chat if empty
@@ -495,7 +515,7 @@ function Composer({ onSend, disabled, onBeforeSend }: { onSend: (text: string) =
   return (
     <div className="composer">
       <input
-        placeholder={disabled ? 'Select a conversation' : 'iMessage'}
+        placeholder={disabled ? 'Select a conversation' : 'c2h'}
         value={value}
         onChange={(e) => setValue(e.target.value)}
         onKeyDown={(e) => {

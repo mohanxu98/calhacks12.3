@@ -285,7 +285,7 @@ async function generateReplyViaGemini(
   if (persona.system && persona.system.trim()) {
     contents.push({ role: 'user', parts: [{ text: persona.system.trim() }] })
   }
-  contents.push({ role: 'user', parts: [{ text: instruction }] })
+  contents.push({ role: 'user', parts: [{ text: instruction + ' Never guess or use the user\'s real name unless they said it first.' }] })
   for (const turn of history) {
     contents.push({ role: turn.author === 'me' ? 'user' : 'model', parts: [{ text: turn.text }] })
   }

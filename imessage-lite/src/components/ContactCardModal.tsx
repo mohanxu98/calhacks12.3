@@ -5,20 +5,26 @@ type Props = {
   name: string
   description: string
   system?: string
+  voiceMemosEnabled?: boolean
   onClose: () => void
-  onSave: (updates: { description: string; system?: string }) => void
+  onSave: (updates: { description: string; system?: string; voiceMemosEnabled?: boolean }) => void
 }
 
-export function ContactCardModal({ open, name, description, system, onClose, onSave }: Props) {
+export function ContactCardModal({ open, name, description, system, voiceMemosEnabled, onClose, onSave }: Props) {
   const [desc, setDesc] = useState(description)
   const [sys, setSys] = useState(system || '')
-  useEffect(() => { if (open) { setDesc(description); setSys(system || '') } }, [open, description, system])
+  const [voice, setVoice] = useState(!!voiceMemosEnabled)
+  useEffect(() => { if (open) { setDesc(description); setSys(system || ''); setVoice(!!voiceMemosEnabled) } }, [open, description, system, voiceMemosEnabled])
   if (!open) return null
   return (
     <div className="modal-backdrop" role="dialog" aria-modal="true">
       <div className="modal" style={{ width: 'min(720px, 92vw)' }}>
         <div className="modal-title">{name} — Contact</div>
         <div className="modal-body" style={{ display: 'grid', gap: 12 }}>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <input type="checkbox" checked={voice} onChange={() => setVoice(v => !v)} />
+            <span>Allow voice memos</span>
+          </label>
           <div>
             <div style={{ fontSize: 12, color: 'var(--subtle)', marginBottom: 6 }}>Persona Description</div>
             <textarea
@@ -43,7 +49,7 @@ export function ContactCardModal({ open, name, description, system, onClose, onS
         </div>
         <div className="modal-actions">
           <button onClick={onClose}>Cancel</button>
-          <button onClick={() => onSave({ description: desc.trim(), system: sys.trim() || undefined })} disabled={!desc.trim()}>Save</button>
+          <button onClick={() => onSave({ description: desc.trim(), system: sys.trim() || undefined, voiceMemosEnabled: voice })} disabled={!desc.trim()}>Save</button>
         </div>
       </div>
     </div>

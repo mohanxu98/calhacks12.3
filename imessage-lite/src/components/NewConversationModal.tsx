@@ -35,7 +35,12 @@ export function NewConversationModal({ open, conversations, onClose, onCreate, o
               onKeyDown={(e) => {
                 if (e.key === 'Enter' && trimmed) {
                   e.preventDefault()
-                  onCreate(trimmed)
+                  const existing = conversations.find(c => c.name.toLowerCase() === trimmed.toLowerCase())
+                  if (existing && onSelectExisting) {
+                    onSelectExisting(existing.id)
+                  } else {
+                    onCreate(trimmed)
+                  }
                   setTo('')
                 }
               }}
@@ -67,7 +72,7 @@ export function NewConversationModal({ open, conversations, onClose, onCreate, o
         </div>
         <div className="modal-actions">
           <button onClick={onClose}>Cancel</button>
-          <button onClick={() => { if (trimmed) { onCreate(trimmed); setTo('') } }} disabled={!trimmed}>Create</button>
+          <button onClick={() => { if (trimmed) { const existing = conversations.find(c => c.name.toLowerCase() === trimmed.toLowerCase()); if (existing && onSelectExisting) onSelectExisting(existing.id); else onCreate(trimmed); setTo('') } }} disabled={!trimmed}>Create</button>
         </div>
       </div>
     </div>
